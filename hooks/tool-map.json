@@ -1,0 +1,10 @@
+{
+  "_说明": "Claude Code 工具名 → 桌宠状态。Claude Code 更新改了工具名时只改这里；没列出的工具（含 mcp__*）一律算 working。",
+  "reading":    ["Read", "Glob", "Grep", "LS", "NotebookRead"],
+  "writing":    ["Write", "Edit", "MultiEdit", "NotebookEdit"],
+  "running":    ["Bash", "PowerShell", "BashOutput", "KillShell", "KillBash"],
+  "searching":  ["WebSearch", "WebFetch"],
+  "delegating": ["Task", "Agent"],
+  "planning":   ["TodoWrite", "ExitPlanMode", "EnterPlanMode"],
+  "waiting":    ["AskUserQuestion"]
+}

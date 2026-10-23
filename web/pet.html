@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude娘桌宠</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: transparent; overflow: hidden;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    -webkit-user-select: none; user-select: none;
+    -webkit-app-region: drag;
+  }
+  #wrap { position: relative; width: 100%; height: 100%; }
+
+  #bubble {
+    position: absolute; left: 50%; top: 8px; transform: translateX(-50%);
+    min-width: 170px; max-width: calc(100% - 16px); box-sizing: border-box;
+    padding: 10px 14px 10px; border-radius: 16px;
+    background: rgba(255,250,246,0.96);
+    border: 1px solid rgba(240,220,208,0.95);
+    box-shadow: 0 6px 20px rgba(42,53,80,0.30);
+  }
+  #bubble::after {
+    content: ""; position: absolute; left: 50%; bottom: -10px; transform: translateX(-50%);
+    border-left: 9px solid transparent; border-right: 9px solid transparent;
+    border-top: 10px solid rgba(255,250,246,0.96);
+  }
+  #head { display: flex; align-items: center; gap: 7px; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: #D97757; flex: 0 0 auto; }
+  #title { font-size: 11.5px; font-weight: 600; color: #D97757; }
+  #text { margin-top: 6px; font-size: 13px; line-height: 1.5; color: #1E2636; word-break: break-word; }
+  #track { margin-top: 8px; height: 4px; border-radius: 2px; background: rgba(242,226,216,0.9); overflow: hidden; }
+  #fill { height: 100%; width: 0%; border-radius: 2px; background: #D97757; transition: width .25s ease; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  #dot.working { animation: pulse 1.1s ease-in-out infinite; }
+
+  #stage { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 100%;
+           display: block; pointer-events: none; }
+
+  /* ---- clickable doodles drawn on the desk ---- */
+  .hot {
+    position: absolute; -webkit-app-region: no-drag; cursor: pointer;
+    border-radius: 50%; transition: background .15s, box-shadow .15s;
+  }
+  .hot:hover { background: rgba(217,119,87,0.22); box-shadow: 0 0 0 2px rgba(217,119,87,0.45); }
+  .hot:active { background: rgba(217,119,87,0.5); }
+  .hot.flash { background: rgba(217,119,87,0.45); box-shadow: 0 0 0 3px rgba(217,119,87,0.6); }
+
+  /* ---- hover dress-up bar (appears under the bubble) ---- */
+  #bar {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 5px;
+    max-width: calc(100% - 12px);
+    opacity: 0; pointer-events: none; transition: opacity .18s ease;
+    z-index: 5;
+  }
+  #bar.show { opacity: 1; pointer-events: auto; }
+  .pill {
+    -webkit-app-region: no-drag; cursor: pointer;
+    font-size: 11px; line-height: 1; padding: 5px 9px; border-radius: 11px;
+    background: rgba(255,250,246,0.96); color: #33415C;
+    border: 1px solid rgba(240,220,208,0.95);
+    box-shadow: 0 2px 8px rgba(42,53,80,0.22);
+    white-space: nowrap;
+  }
+  .pill:hover { background: #FBEDE7; border-color: #E9A88F; }
+  .pill.on { background: #D97757; color: #fff; border-color: #D97757; }
+
+  #hint {
+    position: absolute; left: 0; right: 0; bottom: 4px; text-align: center;
+    font-size: 11px; color: #5B6478; opacity: 0; transition: opacity .3s;
+    text-shadow: 0 1px 3px rgba(255,255,255,0.95), 0 0 6px rgba(255,255,255,0.9);
+    pointer-events: none;
+  }
+  #hint.show { opacity: 1; }
+
+  /* ---- startup splash ---- */
+  #boot {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    font-size: 12px; color: #55607A; background: rgba(255,250,246,0.92);
+    padding: 8px 14px; border-radius: 12px; border: 1px solid rgba(240,220,208,0.95);
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="stage"></canvas>
+
+  <div id="bubble">
+    <div id="head"><div id="dot"></div><div id="title">Claude</div></div>
+    <div id="text">正在启动…</div>
+    <div id="track"><div id="fill"></div></div>
+  </div>
+
+  <div id="bar"></div>
+
+  <div id="hots"></div>
+
+  <div id="boot">正在加载…</div>
+  <div id="hint"></div>
+</div>
+
+<script src="vendor/pixi.min.js"></script>
+<script src="vendor/live2dcubismcore.min.js"></script>
+<script src="vendor/cubism4.min.js"></script>
+<script src="model-config.js"></script>
+<script src="sprite.js"></script>
+<script src="rig-driver.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ==================================================================
+  //  模型相关的一切（表情、状态表、换装、动作名、模型路径）都在
+  //  model-config.js 里，本文件只做调度。换模型 = 换配置文件。
+  // ==================================================================
+  var CFG = window.PET_MODEL || {};
+  var ACCENT = CFG.accent || { idle:'#9A8F86', working:'#D97757', done:'#5DAE6B', error:'#E5534B', waiting:'#E8A33D' };
+  var STOCK_REST = CFG.stockRest || {};
+  var EXPR = CFG.expr || {};
+  var SYMBOL_IDS = CFG.symbolIds || [];
+  var MOUTH_IDS = [];
+  var STATE_MAP = CFG.states || { idle: { expr: null, motion: null, symbol: null, interval: 3, wear: [] } };
+  var SLOTS = CFG.slots || [];
+  var TITLE = CFG.title || 'Claude';
+
+  // Claude Code 的 hooks 只报"事件"，不会报"这一步卡了很久"或"被 Esc 打断"，
+  // 这两种由桌宠自己计时判断（见文件末尾的 watchdog）。
+  var BUSY = { thinking:1, working:1, reading:1, writing:1, running:1, searching:1,
+               delegating:1, planning:1, proud:1, struggling:1 };
+  var LONGTASK_TURN_MS  = 90 * 1000;   // 这一轮已经超过 90 秒
+  var LONGTASK_QUIET_MS = 20 * 1000;   // 并且 20 秒没有新事件 → 打瞌睡
+  var STALE_MS          = 10 * 60 * 1000; // 忙碌中 10 分钟没动静 → 判定中断
+
+  // ==================================================================
+  //  4) runtime
+  // ==================================================================
+  var bubbleEl = document.getElementById('bubble');
+  var dotEl    = document.getElementById('dot');
+  var titleEl  = document.getElementById('title');
+  var textEl   = document.getElementById('text');
+  var fillEl   = document.getElementById('fill');
+  var hintEl   = document.getElementById('hint');
+  var barEl    = document.getElementById('bar');
+  var bootEl   = document.getElementById('boot');
+
+  var model      = null;
+  var puppet     = null;   // 非 Live2D 的角色：2.5D（CFG.rig，rig-driver.js）或立绘（CFG.sprite，sprite.js）
+  var lastStatus = null;
+  var statusAt   = 0;
+  var exprNow    = null;   // name of the expression currently on the face
+  var DBG        = { writes: 0, lastWrite: null, trace: false, log: [],
+                     lastMotion: null, motions: [] };
+  var MOTION_NAME = CFG.motionNames || [];
+  var barEnabled = true;   // tests turn the hover bar off so a stray mouse move
+                           // cannot click a pill in the middle of a measurement
+  var frozen     = false;  // tests freeze the idle float so pixel diffs stay clean
+  var motionIdx    = 0;    // cursor into the current state's motion pool
+  var motionNextAt = 0;    // when the next action in the pool may start
+  var lastSymbol   = null; // symbol params the current state is holding
+  var pick       = {};     // slotId -> option index chosen by the USER (-1 = untouched)
+  var worn       = {};     // slotId -> option index currently WORN
+  var autoWorn   = {};     // slotId -> true when the current wear came from a state
+
+  function showHint(msg) {
+    hintEl.textContent = msg || '';
+    hintEl.className = msg ? 'show' : '';
+    if (msg) {
+      clearTimeout(showHint._t);
+      showHint._t = setTimeout(function () { hintEl.className = ''; }, 1600);
+    }
+  }
+
+  function coreModel() {
+    if (!model || !model.internalModel) return null;
+    return model.internalModel.coreModel || null;
+  }
+
+  function writeParam(cm, id, v) {
+    try { cm.setParameterValueById(id, v); } catch (e) { /* param absent */ }
+  }
+
+  // Every parameter that ANY face touches. Switching faces wipes this whole
+  // set back to rest first: expressions have overlapping-but-not-identical
+  // parameter lists (脸红 has no ParamCheek21, 调皮 does), so undoing only the
+  // previous face leaves the one before it smeared on the model.
+  var EXPR_IDS = (function () {
+    var seen = {}, list = [];
+    Object.keys(EXPR).forEach(function (n) {
+      Object.keys(EXPR[n]).forEach(function (id) { if (!seen[id]) { seen[id] = 1; list.push(id); } });
+    });
+    return list;
+  })();
+
+  // ---- face -------------------------------------------------------
+  function restValue(id) {
+    return Object.prototype.hasOwnProperty.call(STOCK_REST, id) ? STOCK_REST[id] : 0;
+  }
+
+  function applyExpr(name, force) {
+    var cm = coreModel();
+    if (!cm) return;
+    var want = (name && EXPR[name]) ? name : null;
+    // The early-out is only valid when nothing else can have touched the face.
+    // A motion CAN drive a face parameter (番茄酱 writes ParamCheek21), so on a
+    // state change we must force a wipe even if the target face is "no face" —
+    // otherwise the old face survives in the buffer and leaks across states.
+    if (!force && want === exprNow) return;
+
+    // wipe EVERY expression parameter back to rest, then lay the new face on
+    EXPR_IDS.forEach(function (pid) { writeParam(cm, pid, restValue(pid)); });
+    exprNow = null;
+
+    if (want) {
+      var cur = EXPR[want];
+      Object.keys(cur).forEach(function (pid) { writeParam(cm, pid, cur[pid]); });
+      exprNow = want;
+    }
+
+    if (DBG.trace) {
+      DBG.log.push({ t: 'expr', want: want, force: !!force, wiped: EXPR_IDS.length,
+                     has21: EXPR_IDS.indexOf('ParamCheek21') >= 0 });
+      if (DBG.log.length > 40) DBG.log.shift();
+    }
+  }
+
+  // ---- outfit -----------------------------------------------------
+  function slotById(id) {
+    for (var i = 0; i < SLOTS.length; i++) { if (SLOTS[i].id === id) return SLOTS[i]; }
+    return null;
+  }
+
+  function applyOutfit() {
+    var cm = coreModel();
+    if (!cm) return;
+    SLOTS.forEach(function (s) {
+      var idx = worn[s.id];
+      if (idx === undefined || idx === null || idx < 0) idx = 0;
+      var opt = s.opts[idx] || s.opts[0];
+      // first clear every alternative of this slot, then set the chosen one
+      s.opts.forEach(function (o) {
+        Object.keys(o.p).forEach(function (pid) {
+          if (!opt.p || opt.p[pid] === undefined) writeParam(cm, pid, restValue(pid));
+        });
+      });
+      Object.keys(opt.p).forEach(function (pid) { writeParam(cm, pid, opt.p[pid]); });
+    });
+  }
+
+  // ---- symbol props (bubble in the mouth) --------------------------
+  // A state's `symbol` map hard-overrides those params every frame. Params the
+  // state does NOT name are left completely alone — that is what lets `idle`
+  // keep its bubble: the idle loop keeps animating paopao* because nobody
+  // overwrites it. Params held by the PREVIOUS state are released once on the
+  // way out, so leaving 晕晕 puts the bubble back under idle's control.
+  function applySymbol(status) {
+    var cm = coreModel();
+    if (!cm) return;
+    var st = STATE_MAP[status] || STATE_MAP.idle;
+    var want = st.symbol || {};
+    var got = lastSymbol || {};
+    Object.keys(want).forEach(function (pid) { writeParam(cm, pid, want[pid]); });
+    Object.keys(got).forEach(function (pid) {
+      if (!Object.prototype.hasOwnProperty.call(want, pid)) writeParam(cm, pid, restValue(pid));
+    });
+    // shallow copy is enough: the maps only ever hold numbers
+    lastSymbol = {};
+    Object.keys(want).forEach(function (pid) { lastSymbol[pid] = want[pid]; });
+
+    if (DBG.trace) {
+      DBG.log.push({ t: 'sym', st: status,
+                     keys: Object.keys(st).join('|'),
+                     symIsNull: st.symbol === null,
+                     symIsObj: !!(st.symbol && typeof st.symbol === 'object'),
+                     mapHit: !!STATE_MAP[status],
+                     want: Object.keys(want).length,
+                     wantKeys: Object.keys(want).join(','),
+                     reads: (function () {
+                       var o = {};
+                       SYMBOL_IDS.forEach(function (k) {
+                         try { o[k] = +cm.getParameterValueById(k).toFixed(2); } catch (e) { o[k] = null; }
+                       });
+                       return o;
+                     })() });
+      if (DBG.log.length > 40) DBG.log.shift();
+    }
+  }
+
+  // A "pinned" slot is one the user dressed by hand; states must not touch it.
+  function isPinned(id) { return pick[id] !== undefined && pick[id] >= 0; }
+
+  function syncAutoWear(status) {
+    var st = STATE_MAP[status] || STATE_MAP.idle;
+    var want = {};
+    (st.wear || []).forEach(function (id) { want[id] = true; });
+
+    // 1) strip anything this state's PREDECESSOR dressed automatically.
+    //    Without this pass, leaving 搜索(left glasses on) for 完成 would keep
+    //    the glasses on forever: the old code only ever ADDED auto-wear.
+    var dirty = false;
+    Object.keys(autoWorn).forEach(function (id) {
+      if (!autoWorn[id]) return;
+      if (want[id]) return;
+      autoWorn[id] = false;
+      if (!isPinned(id)) { worn[id] = 0; pick[id] = -1; dirty = true; }
+    });
+
+    // 2) dress the slots this state wants, unless the user pinned them
+    Object.keys(want).forEach(function (id) {
+      if (isPinned(id)) return;
+      if (autoWorn[id]) return;
+      if (!slotById(id)) return;
+      worn[id] = 1;            // option 1 is the first real look of every slot
+      autoWorn[id] = true;
+      dirty = true;
+    });
+
+    applyOutfit();
+    if (dirty) renderBar();
+  }
+
+  function cycleSlot(id, dir) {
+    var s = slotById(id);
+    if (!s || !model) return;
+    var cur = worn[id];
+    if (cur === undefined || cur === null || cur < 0) cur = 0;
+    var n = s.opts.length;
+    var next = ((cur + dir) % n + n) % n;
+    worn[id] = next;
+    pick[id] = next;        // user took control of this slot: pin it
+    autoWorn[id] = false;
+    applyOutfit();
+    renderBar();
+    var nm = s.opts[next].name;
+    showHint(s.label + '：' + nm + (next === 0 ? '' : '（再点切换）'));
+    flash(s.hot);
+  }
+
+  function clearSlot(id) {
+    var s = slotById(id);
+    if (!s) return;
+    worn[id] = 0;
+    pick[id] = -1;
+    autoWorn[id] = false;
+    applyOutfit();
+    renderBar();
+    showHint(s.label + '：不戴（可被状态自动穿戴）');
+    flash(s.hot);
+  }
+
+  function flash(hotId) {
+    var el = hotId && document.getElementById(hotId);
+    if (!el) return;
+    el.classList.add('flash');
+    setTimeout(function () { el.classList.remove('flash'); }, 260);
+  }
+
+  // ---- hover bar --------------------------------------------------
+  function renderBar() {
+    barEl.innerHTML = '';
+    SLOTS.forEach(function (s) {
+      var idx = worn[s.id];
+      if (idx === undefined || idx === null || idx < 0) idx = 0;
+      var b = document.createElement('div');
+      b.className = 'pill' + (idx > 0 ? ' on' : '');
+      b.textContent = s.label + '·' + (s.opts[idx] ? s.opts[idx].name : '不戴');
+      b.title = '左键下一个 / 右键上一个 / 中键脱下';
+      b.addEventListener('click', function (ev) { ev.stopPropagation(); cycleSlot(s.id, 1); });
+      b.addEventListener('contextmenu', function (ev) {
+        ev.preventDefault(); ev.stopPropagation(); cycleSlot(s.id, -1);
+      });
+      b.addEventListener('auxclick', function (ev) {
+        ev.preventDefault(); ev.stopPropagation(); clearSlot(s.id);
+      });
+      barEl.appendChild(b);
+    });
+  }
+
+  function placeBar() {
+    if (!barEnabled) return;
+    // sit just under the speech bubble, re-measured whenever the text changes
+    var r = bubbleEl.getBoundingClientRect();
+    barEl.style.top = Math.round(r.bottom + 14) + 'px';
+  }
+
+  // ---- motion scheduler -------------------------------------------
+  // Drives a state's action pool so the pet has a RHYTHM instead of one clip on
+  // endless repeat. Each state names a POOL of actions that all make sense for
+  // it; the scheduler walks the pool so the pet keeps finding something to do:
+  //
+  //   · the state's first action starts immediately, the wait comes after it;
+  //   · a multi-clip pool advances by one clip every `interval` seconds;
+  //   · intervals carry ±15% jitter so it never feels metronomic;
+  //   · a single-clip pool plays ONCE and then rests on the Idle breathe, so
+  //     出错 doesn't hammer 喷水 every few seconds forever.
+  function statePool(m) {
+    if (m.motion === null || m.motion === undefined) return null;
+    var p = m.motion;
+    return (Object.prototype.toString.call(p) === '[object Array]') ? p : [p];
+  }
+
+  function idleBreathe() {
+    // loop defaults to true in pixi-live2d-display when no fade-out is given
+    try { model.motion('Idle', undefined, 3); } catch (e) {}
+  }
+
+  function playNextMotion() {
+    if (!model || !lastStatus) return;
+    var m = STATE_MAP[lastStatus] || STATE_MAP.idle;
+    var pool = statePool(m);
+    if (pool === null) { idleBreathe(); return; }
+    var idx = pool[motionIdx % pool.length];
+    try {
+      // fade-out left undefined -> a one-shot, so 吹泡泡/番茄酱 settle instead
+      // of cycling forever between our own interruptions
+      model.motion('Tap', idx, 3);
+      DBG.lastMotion = idx;
+      DBG.motions.push({ s: lastStatus, i: idx, n: MOTION_NAME[idx] || String(idx) });
+      if (DBG.motions.length > 60) DBG.motions.shift();
+    } catch (e) {}
+  }
+
+  function startMotionCycle(status) {
+    var m = STATE_MAP[status] || STATE_MAP.idle;
+    motionIdx = 0;
+    motionNextAt = performance.now() + (m.interval || 3) * 1000;
+    // the state's first action fires immediately; the wait comes after it
+    playNextMotion();
+  }
+
+  function tickMotion() {
+    if (!model || !lastStatus) return;
+    var m = STATE_MAP[lastStatus] || STATE_MAP.idle;
+    var pool = statePool(m);
+    if (pool === null) return;           // breathing on Idle: nothing to do
+    if (pool.length <= 1) return;        // single-clip pool: play once, then rest
+    if (performance.now() < motionNextAt) return;
+
+    motionIdx++;
+    var base = (m.interval || 3) * 1000;
+    motionNextAt = performance.now() + base * (0.85 + Math.random() * 0.30);
+    playNextMotion();
+  }
+
+  // ---- status -----------------------------------------------------
+  function applyStatus(status) {
+    var m = STATE_MAP[status] || STATE_MAP.idle;
+    frozen = false;   // the probe's freeze() must never outlive a state change
+    if (puppet) {
+      puppet.setFace(m.expr);
+      if (puppet.setStatus) puppet.setStatus(status);   // 2.5D 模式的身体动作
+    }
+    applyExpr(m.expr, true);      // force: a motion may have rewritten face params
+    applySymbol(status);
+    syncAutoWear(status);
+    startMotionCycle(status);
+  }
+
+  window.updateState = function (title, text, status, progress) {
+    titleEl.textContent = title || TITLE;
+    if (puppet && text && text !== textEl.textContent) puppet.talk();   // 气泡换字时动几下嘴
+    textEl.textContent = text || '';
+    var c = accentOf(status);
+    dotEl.style.background = c;
+    fillEl.style.background = c;
+    dotEl.className = BUSY[status] ? 'working' : '';
+    var p = (typeof progress === 'number' && isFinite(progress)) ? progress : 0;
+    if (p < 0) p = 0;
+    if (p > 1) p = 1;
+    fillEl.style.width = (p * 100).toFixed(1) + '%';
+    placeBar();
+
+    var changed = (status !== lastStatus);
+    if (changed) {
+      lastStatus = status;
+      statusAt = Date.now();
+      applyStatus(status);
+    }
+  };
+
+  function accentOf(status) {
+    if (ACCENT[status]) return ACCENT[status];
+    if (status === 'proud') return ACCENT.done || ACCENT.idle;
+    if (status === 'struggling' || status === 'interrupted') return ACCENT.error || ACCENT.idle;
+    if (BUSY[status] || status === 'longtask') return ACCENT.working || ACCENT.idle;
+    return ACCENT.idle;
+  }
+
+  // ---- 事件流 + watchdog --------------------------------------------
+  // hook 每写一次状态文件都会带上 ts（事件时间）和 turnStart（本轮开始时间）。
+  // 桌宠在此之上补两种 hooks 报不出来的状态：
+  //   longtask    —— 这一轮超过 90 秒、且 20 秒没有新事件：她趴在书上打瞌睡；
+  //   interrupted —— 忙碌中 10 分钟毫无动静：多半被 Esc 打断了，演一下再回待机。
+  // 一有新事件就立刻回到真实状态。
+  var feed = { status: 'idle', title: '', bubble: '', progress: 0, ts: 0, turnStart: 0, seenAt: 0 };
+  var override = null;   // 'longtask' | 'interrupted' | null
+
+  function onFeed(s) {
+    var ts = (typeof s.ts === 'number') ? s.ts : Date.now();
+    feed.status = s.status || 'idle';
+    feed.title = s.title || TITLE;
+    feed.bubble = s.bubble || '';
+    feed.progress = (typeof s.progress === 'number') ? s.progress : 0;
+    feed.turnStart = (typeof s.turnStart === 'number') ? s.turnStart : 0;
+    feed.ts = ts;
+    feed.seenAt = Date.now();
+    override = null;
+    window.updateState(feed.title, feed.bubble, feed.status, feed.progress);
+  }
+  window.onFeed = onFeed;
+
+  function watchdog() {
+    if (!feed.seenAt || !BUSY[feed.status]) return;
+    var now = Date.now();
+    var quiet = now - Math.max(feed.ts, feed.seenAt - 1000);
+    if (quiet > STALE_MS) {
+      if (override !== 'interrupted' && override !== 'gone') {
+        override = 'interrupted';
+        window.updateState(feed.title, '好像停下来了（被打断了？）', STATE_MAP.interrupted ? 'interrupted' : 'idle', 0);
+        setTimeout(function () {
+          if (override === 'interrupted') {
+            override = 'gone';
+            window.updateState(feed.title, '我在这儿，开工的时候叫我。', 'idle', 0);
+          }
+        }, 8000);
+      }
+      return;
+    }
+    if (feed.turnStart && now - feed.turnStart > LONGTASK_TURN_MS && quiet > LONGTASK_QUIET_MS) {
+      if (override !== 'longtask' && STATE_MAP.longtask) {
+        override = 'longtask';
+        var mins = Math.round((now - feed.turnStart) / 60000);
+        window.updateState(feed.title, '这一步有点久……（已经 ' + (mins < 1 ? '1' : mins) + ' 分钟）', 'longtask', feed.progress);
+      }
+    }
+  }
+  setInterval(watchdog, 1000);
+  window.showHint = showHint;
+
+  window.updateState(TITLE, '正在加载 Live2D 模型…', 'working', 0.15);
+
+  // ---- desk doodles ----------------------------------------------
+  (function () {
+    var host = document.getElementById('hots');
+    (CFG.hots || []).forEach(function (h) {
+      var d = document.createElement('div');
+      d.className = 'hot'; d.id = h.id; d.setAttribute('style', h.style);
+      var sl = slotById(h.slot); if (sl) d.title = sl.label;
+      host.appendChild(d);
+    });
+  })();
+  SLOTS.forEach(function (s) {
+    var el = document.getElementById(s.hot);
+    if (!el) return;
+    el.addEventListener('click', function (ev) { ev.stopPropagation(); cycleSlot(s.id, 1); });
+    el.addEventListener('contextmenu', function (ev) {
+      ev.preventDefault(); ev.stopPropagation(); cycleSlot(s.id, -1);
+    });
+  });
+
+  // ---- hover show/hide for the dress-up bar -----------------------
+  document.addEventListener('mousemove', function (ev) {
+    if (!model || !barEnabled) return;
+    var r = bubbleEl.getBoundingClientRect();
+    var pad = 34;
+    var overBar = barEl.classList.contains('show') &&
+      ev.clientY > barEl.offsetTop - 6 && ev.clientY < barEl.offsetTop + barEl.offsetHeight + 6;
+    var near = ev.clientY > r.top - pad && ev.clientY < r.bottom + pad + 26;
+    barEl.classList.toggle('show', near || overBar);
+  });
+
+  // ---- verification / debug hook --------------------------------
+  // Exposes read-only introspection so a test harness (or a curious user
+  // pressing F12) can see exactly which parameters the pet is writing.
+  window.__pet = {
+    get model() { return model; },
+    get status() { return lastStatus; },
+    get expr() { return exprNow; },
+    get worn() { return worn; },
+    get autoWorn() { return autoWorn; },
+    get pick() { return pick; },
+    states: STATE_MAP,
+    get override() { return override; },
+    feed: feed,
+    watchdog: watchdog,
+    exprs: EXPR,
+    slots: SLOTS,
+    dbg: DBG,
+    symbolIds: SYMBOL_IDS,
+    mouthIds: MOUTH_IDS,
+    symbolNow: function (status) {
+      var st = STATE_MAP[status || lastStatus] || STATE_MAP.idle;
+      return st.symbol || null;
+    },
+    symbolParams: function () {
+      var cm = coreModel();
+      var o = {};
+      if (!cm) return o;
+      SYMBOL_IDS.forEach(function (k) {
+        try { o[k] = +cm.getParameterValueById(k).toFixed(3); } catch (e) { o[k] = null; }
+      });
+      return o;
+    },
+    // Diagnostics for the motion scheduler: which action is playing, and which
+    // actions have been fired since the last reset (so a test can prove the pet
+    // rotates instead of replaying one clip).
+    motionState: function () {
+      return {
+        idx: motionIdx,
+        last: DBG.lastMotion,
+        lastNm: MOTION_NAME[DBG.lastMotion] || null,
+        pool: statePool(STATE_MAP[lastStatus] || STATE_MAP.idle),
+        interval: (STATE_MAP[lastStatus] || STATE_MAP.idle).interval || null,
+        history: DBG.motions.slice(),
+      };
+    },
+    resetMotions: function () { DBG.motions = []; return 1; },
+    setBar: function (on) {
+      barEnabled = !!on;
+      barEl.classList.toggle('show', false);
+      if (barEnabled) placeBar();
+      return barEnabled;
+    },
+    // stops the idle float and re-centres the model, so a pixel comparison
+    // between two runs isn't swamped by a +-2.5px vertical wobble
+    freeze: function (on) {
+      frozen = !!on;
+      if (frozen && model) {
+        model.rotation = 0;
+        model.y = (app.renderer.height / app.renderer.resolution) - 2;
+      }
+      return frozen;
+    },
+    params: function (ids) {
+      var cm = coreModel();
+      var out = {};
+      if (!cm) return out;
+      (ids || []).forEach(function (id) {
+        try { out[id] = cm.getParameterValueById(id); } catch (e) { out[id] = null; }
+      });
+      return out;
+    },
+    allCustom: function () {
+      var cm = coreModel();
+      var seen = {}, out = {};
+      var names = [];
+      Object.keys(EXPR).forEach(function (n) { names = names.concat(Object.keys(EXPR[n])); });
+      SLOTS.forEach(function (s) { s.opts.forEach(function (o) { names = names.concat(Object.keys(o.p)); }); });
+      names.forEach(function (id) { seen[id] = true; });
+      Object.keys(seen).forEach(function (id) {
+        try { out[id] = cm ? cm.getParameterValueById(id) : null; } catch (e) { out[id] = null; }
+      });
+      return out;
+    }
+  };
+
+  // ---- state feed from the Electron main process ------------------
+  if (window.petHost && typeof window.petHost.onState === 'function') {
+    window.petHost.onState(function (s) {
+      if (!s) return;
+      onFeed(s);
+    });
+  }
+
+  // ---- 非 Live2D 的角色 ----------------------------------------------
+  //   2.5D（CFG.rig）：Anime2.5DRig 自动绑定的分层模型，要 http 打开（BroadcastChannel 同源）；
+  //   立绘（CFG.sprite）：立绘 + 表情差分叠图。2.5D 不可用（如 file:// 直开）时退回立绘。
+  function mountPuppet(api, cfg) {
+    return api.mount(cfg, document.getElementById('wrap')).then(function (p) {
+      puppet = p;
+      if (bootEl) bootEl.style.display = 'none';
+      lastStatus = null;
+      window.updateState(TITLE, CFG.helloText || '我在这儿，开工的时候叫我。', 'idle', 0);
+    });
+  }
+  var useRig = CFG.rig && window.PetRig && /^https?:$/.test(location.protocol);
+  var useSprite = CFG.sprite && window.PetSprite;
+  if (useRig || useSprite) {
+    document.getElementById('stage').style.display = 'none';
+    (useRig ? mountPuppet(window.PetRig, CFG.rig).catch(function (err) {
+      if (!useSprite) throw err;
+      console.warn('2.5D 加载失败，退回立绘：', err);
+      return mountPuppet(window.PetSprite, CFG.sprite);
+    }) : mountPuppet(window.PetSprite, CFG.sprite))
+      .catch(function (err) {
+        if (bootEl) bootEl.textContent = '角色加载失败：' + err.message;
+        window.updateState(TITLE, '角色加载失败：' + err.message, 'error', 0);
+      });
+    return;
+  }
+
+  // ---- pixi / live2d ---------------------------------------------
+  var app = new PIXI.Application({
+    view: document.getElementById('stage'),
+    backgroundAlpha: 0,
+    antialias: true,
+    autoDensity: true,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
+    resizeTo: window
+  });
+
+  PIXI.live2d.Live2DModel.from(CFG.path, { autoInteract: false })
+    .then(function (m) {
+      model = m;
+      app.stage.addChild(m);
+
+      function layout() {
+        var sw = app.renderer.width / app.renderer.resolution;
+        var sh = app.renderer.height / app.renderer.resolution;
+        var lay = CFG.layout || {};
+        var s = (sh * (lay.heightFrac || 0.72)) / m.internalModel.originalHeight;
+        m.scale.set(s);
+        m.x = sw * (lay.xFrac || 0.5);
+        m.y = sh - 2;
+        m.anchor.set(0.5, 1);
+      }
+      layout();
+      window.addEventListener('resize', layout);
+      if (bootEl) bootEl.style.display = 'none';
+
+      SLOTS.forEach(function (s) { worn[s.id] = 0; pick[s.id] = -1; autoWorn[s.id] = false; });
+      // The table slot's first option already carries jingyu:1, so option 0 puts
+      // 小鲸鱼陪伴 on screen from the very first frame.
+      renderBar();
+      placeBar();
+
+      // The motion scheduler owns every Tap action from here on. The old
+      // motionFinish handler used to call m.motion('Tap', st.motion) again,
+      // which is exactly what made 吹泡泡 restart forever; tickMotion() now
+      // decides when the next action is due. The Idle breathe stays as the
+      // resting state between actions and for states with no Tap action.
+      try { m.motion('Idle'); } catch (e) {}
+
+      var t0 = performance.now();
+      app.ticker.add(function () {
+        var t = (performance.now() - t0) / 1000;
+        if (model && !frozen) {
+          model.rotation = Math.sin(t * 0.9) * 0.012;
+          model.y = (app.renderer.height / app.renderer.resolution) - 2 + Math.sin(t * 1.4) * 2.5;
+        }
+        tickMotion();
+      });
+
+      // Re-assert the face and the outfit AFTER the model has finished writing
+      // its own parameters for this frame. Ordering is the whole point:
+      // 番茄酱 drives ParamCheek21 and ParamEyeLOpen, so patching from the pixi
+      // ticker (which runs BEFORE the model updates) simply got overwritten and
+      // let the previous state's face leak through. internalModel.update() runs
+      // motion + physics, so wrapping it puts our values last, every frame.
+      // ~15 integer assignments per frame, no allocation.
+      //
+      // The same wrapper snapshots the buffer afterwards (DBG.lastWrite) so a
+      // verification run can read exactly what the renderer will consume.
+      var IM = m.internalModel;
+      var origIMUpdate = IM.update;
+      IM.update = function () {
+        var r = origIMUpdate.apply(this, arguments);
+        // force=true: this pass exists precisely to outrank what the motion
+        // curves just wrote, so it must not take the "already correct" shortcut.
+        applyExpr(exprNow, true);
+        applyOutfit();
+        applySymbol(lastStatus);   // keeps the bubble from flickering back on
+        var cmx = coreModel();
+        if (cmx) {
+          try {
+            var snap = {};
+            EXPR_IDS.forEach(function (id) { snap[id] = cmx.getParameterValueById(id); });
+            snap['ParamEyeLOpen'] = cmx.getParameterValueById('ParamEyeLOpen');
+            DBG.lastWrite = snap;
+            DBG.writes++;
+          } catch (e) {}
+        }
+        return r;
+      };
+
+      lastStatus = null;
+      window.updateState(TITLE, CFG.helloText || '我在这儿，开工的时候叫我。', 'idle', 0);
+    })
+    .catch(function (err) {
+      if (bootEl) bootEl.textContent = 'Live2D 加载失败：' + err;
+      window.updateState(TITLE, 'Live2D 加载失败：' + err, 'error', 0);
+    });
+})();
+</script>
+</body>
+</html>

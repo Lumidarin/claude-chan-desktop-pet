@@ -1,0 +1,13 @@
+# Electron 运行时（Release 的 zip 里自带；源码仓库不放）
+electron/
+
+# 本地生图环境（几十 GB）
+tools/本地生图/.venv/
+tools/本地生图/hf_cache/
+tools/本地生图/models/
+*.log
+
+__pycache__/
+*.pyc
+Thumbs.db
+desktop.ini
