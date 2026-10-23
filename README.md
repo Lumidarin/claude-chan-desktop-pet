@@ -5,9 +5,12 @@
 
 <p align="center"><img src="docs/preview.png" width="300" alt="Claude娘桌宠"></p>
 
+演示视频：[B站](https://www.bilibili.com/video/BV17enb6NE1y/) · [YouTube](https://youtu.be/k30HEh84SPA)
+
 一个坐在书桌后看书的 Claude娘桌宠，和 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 联动：
 Claude Code 读文件、写代码、跑命令、联网搜索的时候，她会换上对应的表情和动作，头上的气泡写着正在做什么。
 
+角色原型来自 B 站 UP 主 **ZipZipPipe** 的 Claude娘设定，原作者已允许二次创作。
 衣服、道具和贴图里不使用 Claude / Anthropic 的商标、星芒图案或 Clawd 吉祥物。
 
 > **这是第一版（v0.1）。** 现在的角色是自动绑定的 2.5D 模型：会呼吸、眨眼、说话时动嘴、头发摆动、翻书点头。
