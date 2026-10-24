@@ -10,7 +10,6 @@
     background: transparent; overflow: hidden;
     font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
     -webkit-user-select: none; user-select: none;
-    -webkit-app-region: drag;
   }
   #wrap { position: relative; width: 100%; height: 100%; }
 
@@ -41,7 +40,7 @@
 
   /* ---- clickable doodles drawn on the desk ---- */
   .hot {
-    position: absolute; -webkit-app-region: no-drag; cursor: pointer;
+    position: absolute; cursor: pointer;
     border-radius: 50%; transition: background .15s, box-shadow .15s;
   }
   .hot:hover { background: rgba(217,119,87,0.22); box-shadow: 0 0 0 2px rgba(217,119,87,0.45); }
@@ -58,7 +57,7 @@
   }
   #bar.show { opacity: 1; pointer-events: auto; }
   .pill {
-    -webkit-app-region: no-drag; cursor: pointer;
+    cursor: pointer;
     font-size: 11px; line-height: 1; padding: 5px 9px; border-radius: 11px;
     background: rgba(255,250,246,0.96); color: #33415C;
     border: 1px solid rgba(240,220,208,0.95);
@@ -782,6 +781,33 @@
       if (bootEl) bootEl.textContent = 'Live2D 加载失败：' + err;
       window.updateState(TITLE, 'Live2D 加载失败：' + err, 'error', 0);
     });
+})();
+</script>
+<script>
+// 拖动窗口：按在 .hot / .pill（可点的涂鸦和换装按钮）以外的地方，左键拖动。
+// 不用 -webkit-app-region: drag，它在 Windows 上会吞掉右键，Electron 收不到 context-menu。
+(function () {
+  'use strict';
+  var host = window.petHost;
+  if (!host || !host.dragStart) return;
+  var dragging = false;
+
+  function end() {
+    if (!dragging) return;
+    dragging = false;
+    host.dragEnd();
+  }
+
+  document.addEventListener('pointerdown', function (ev) {
+    if (ev.button !== 0 || (ev.target.closest && ev.target.closest('.hot, .pill'))) return;
+    dragging = true;
+    document.documentElement.setPointerCapture(ev.pointerId);   // 光标冲出窗口也能收到 pointerup
+    host.dragStart();
+  });
+  document.addEventListener('pointerup', end);
+  document.addEventListener('pointercancel', end);
+  document.addEventListener('lostpointercapture', end);
+  window.addEventListener('blur', end);
 })();
 </script>
 </body>
