@@ -11,7 +11,7 @@
 //    - 在桌宠身上拖动可以移动窗口（拖动由页面发 IPC、主进程跟随光标，
 //      不用 -webkit-app-region: drag：Windows 上它会吞掉右键，菜单就弹不出来）
 //    - 右键菜单：置顶、固定位置（锁住不能拖）、大小、重新载入、关闭
-//    - 大小、置顶、固定位置会记在 userData/settings.json，下次启动沿用
+//    - 位置、大小、置顶、固定位置会记在 userData/settings.json，下次启动沿用
 // ============================================================
 
 const { app, BrowserWindow, screen, Menu, ipcMain } = require('electron');
@@ -70,6 +70,7 @@ let win = null;
 let pinned = true;    // 置顶：始终显示在其他窗口上面
 let locked = false;   // 固定位置：不能再拖动
 let scale = 1;
+let pos = null;       // 上次的窗口左上角 { x, y }；没有就放右上角
 let lastRaw = '';
 
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
@@ -80,14 +81,28 @@ function loadSettings() {
     if (typeof s.pinned === 'boolean') pinned = s.pinned;
     if (typeof s.locked === 'boolean') locked = s.locked;
     if (SCALES.some((o) => o.value === s.scale)) scale = s.scale;
+    if (Number.isFinite(s.x) && Number.isFinite(s.y)) pos = { x: s.x, y: s.y };
   } catch (e) { /* 第一次启动，用默认值 */ }
 }
 
 function saveSettings() {
   try {
+    if (win && !win.isDestroyed()) {
+      const b = win.getBounds();
+      pos = { x: b.x, y: b.y };
+    }
     fs.mkdirSync(app.getPath('userData'), { recursive: true });
-    fs.writeFileSync(SETTINGS_FILE(), JSON.stringify({ pinned, locked, scale }), 'utf8');
+    fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(Object.assign({ pinned, locked, scale }, pos)), 'utf8');
   } catch (e) { /* 存不下也不影响使用 */ }
+}
+
+// 把窗口挪回 (x, y) 所在（或最近的）屏幕的工作区里，外接显示器拔了、分辨率变了也不会丢
+function fitToScreen(x, y, width, height) {
+  const wa = screen.getDisplayMatching({ x, y, width, height }).workArea;
+  return {
+    x: Math.max(wa.x, Math.min(x, wa.x + wa.width - width)),
+    y: Math.max(wa.y, Math.min(y, wa.y + wa.height - height))
+  };
 }
 
 function applyPinned() {
@@ -103,11 +118,7 @@ function applyScale() {
   const b = win.getBounds();
   const width = Math.round(W * scale);
   const height = Math.round(H * scale);
-  const wa = screen.getDisplayMatching(b).workArea;
-  let x = Math.round(b.x + b.width / 2 - width / 2);
-  let y = b.y + b.height - height;
-  x = Math.max(wa.x, Math.min(x, wa.x + wa.width - width));
-  y = Math.max(wa.y, Math.min(y, wa.y + wa.height - height));
+  const { x, y } = fitToScreen(Math.round(b.x + b.width / 2 - width / 2), b.y + b.height - height, width, height);
   win.webContents.setZoomFactor(scale);
   win.setBounds({ x, y, width, height });
 }
@@ -129,7 +140,7 @@ function startDrag() {
 }
 
 function stopDrag() {
-  if (dragTimer) { clearInterval(dragTimer); dragTimer = null; }
+  if (dragTimer) { clearInterval(dragTimer); dragTimer = null; saveSettings(); }   // 拖完记住位置
 }
 
 function readState() {
@@ -194,12 +205,14 @@ function createWindow(port) {
   const wa = screen.getPrimaryDisplay().workArea;
   const width = Math.round(W * scale);
   const height = Math.round(H * scale);
+  const start = pos ? fitToScreen(pos.x, pos.y, width, height)
+                    : { x: wa.x + wa.width - width - MARGIN, y: wa.y + MARGIN };
 
   win = new BrowserWindow({
     width,
     height,
-    x: wa.x + wa.width - width - MARGIN,
-    y: wa.y + MARGIN,
+    x: start.x,
+    y: start.y,
     show: false,
     useContentSize: true,
     transparent: true,
