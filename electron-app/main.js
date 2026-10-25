@@ -121,6 +121,13 @@ function applyScale() {
   const { x, y } = fitToScreen(Math.round(b.x + b.width / 2 - width / 2), b.y + b.height - height, width, height);
   win.webContents.setZoomFactor(scale);
   win.setBounds({ x, y, width, height });
+  syncUiScale();
+}
+
+// 缩小时气泡、换装条保持标准大小，由页面里的 setUiScale 按 zoom 反向放回去
+function syncUiScale() {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.executeJavaScript('window.setUiScale && window.setUiScale(' + Number(scale) + ')').catch(() => {});
 }
 
 // 拖动：页面按下鼠标时通知主进程，之后主进程按光标位移移动窗口。
@@ -247,6 +254,7 @@ function createWindow(port) {
   // 每次载入都推一次，之后轮询
   win.webContents.on('did-finish-load', () => {
     win.webContents.setZoomFactor(scale);   // 缩放按页面记，每次载入都要重设
+    syncUiScale();
     lastRaw = '';          // 重新载入后强制重发
     setTimeout(pushState, 400);
   });
